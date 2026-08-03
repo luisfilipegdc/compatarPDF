@@ -17,8 +17,11 @@ repositório no GitHub Pages e acesse a URL.
    `doc2` vem antes de `doc10`).
 2. **Qualidade e tamanho** — escolha um modo:
    - **Apenas unir** (padrão) — copia as páginas como estão. O texto continua
-     selecionável e nada perde qualidade; o arquivo final é a soma dos
-     originais.
+     selecionável e nada perde qualidade. Vem com a **otimização de formas
+     repetidas** ligada: cada desenho que se repete no documento (as bolinhas
+     de um cartão-resposta, por exemplo) passa a ser desenhado uma vez só e
+     reaproveitado. Continua tudo vetorial — em um cartão-resposta real isso
+     tirou 90% do tamanho sem alterar um pixel.
    - **Alta / Média / Menor** — cada página vira uma imagem JPEG. Reduz muito o
      tamanho de documentos digitalizados, mas o texto deixa de ser selecionável.
      Os controles de DPI, qualidade e escala de cinza ficam disponíveis para
@@ -46,8 +49,23 @@ vetor — nesses casos use *Apenas unir*.
 
 ### Medições
 
-Números obtidos com os PDFs de teste do próprio projeto (um cartão-resposta
-digitalizado a 300 dpi e um cartão-resposta vetorial de 29 páginas):
+**Otimização de formas repetidas**, em um cartão-resposta vetorial real de 29
+páginas gerado pela estuda.com:
+
+| | |
+| --- | --- |
+| Tamanho | 8,1 MB → **774 KB** (90% menor) |
+| Tempo | 4,9 s |
+| Trabalho feito | 10.487 desenhos repetidos → 143 formas reaproveitadas |
+| Texto | idêntico nas 29 páginas |
+| Diferença visual a 150 dpi | pior página: 0,028% dos pixels, todos em borda de antialiasing |
+
+Unindo esse arquivo com um lote de 294 páginas pela interface: 11,8 MB → 4,65 MB
+em 7 segundos, 323 páginas na ordem certa.
+
+**Modos de compressão**, com os PDFs de teste do próprio projeto (um
+cartão-resposta digitalizado a 300 dpi e um cartão-resposta vetorial de 29
+páginas):
 
 | Modo | Digitalizado (893 KB) | Vetorial 29 pág. (8,3 MB) |
 | --- | --- | --- |
@@ -89,12 +107,14 @@ cada modo faz com ele:
   estourar o limite de canvas de navegadores móveis e do Safari.
 - Documentos muito extensos consomem memória do navegador; o processamento é
   feito arquivo a arquivo e pode ser cancelado a qualquer momento.
-- **O modo *Apenas unir* não reduz tamanho.** Ao juntar arquivos que saíram do
-  mesmo gerador, cada um traz sua própria cópia das fontes, e a ferramenta não
-  unifica essas cópias — tentar isso quebrou a extração de texto em teste (veja
-  [docs/PROMPT-GERACAO-CARTOES.md](docs/PROMPT-GERACAO-CARTOES.md)). Se o lote
-  precisa ser pequeno *e* intacto, ele tem que sair pequeno da geração: um único
-  PDF com todas as páginas, em vez de um arquivo por página.
+- A otimização do modo *Apenas unir* elimina **desenhos repetidos**, não cópias
+  de fontes. Ao juntar arquivos do mesmo gerador, cada um traz sua própria cópia
+  das fontes embutidas, e isso continua duplicado — unificar essas cópias
+  quebrou a extração de texto em teste, então ficou de fora (veja
+  [docs/PROMPT-GERACAO-CARTOES.md](docs/PROMPT-GERACAO-CARTOES.md)).
+- Em PDFs sem desenhos repetidos (texto corrido, digitalizações) a otimização
+  não encontra nada e o arquivo sai do mesmo tamanho. Ela não é um compressor
+  genérico.
 
 ## Estrutura
 

@@ -89,6 +89,44 @@ export async function fixtureCartao(page, destino, { comMarcas = true } = {}){
   return b64ParaArquivo(b64, destino);
 }
 
+// Página com a mesma forma complexa repetida muitas vezes — é o padrão que o
+// otimizador de formas existe para resolver (as bolinhas de um cartão-resposta
+// desenhadas curva a curva, uma vez para cada questão).
+export async function fixtureFormasRepetidas(page, destino, copias = 60){
+  const b64 = await page.evaluate(async ({ copias }) => {
+    const { PDFDocument, PDFName } = PDFLib;
+    const doc = await PDFDocument.create();
+    const p = doc.addPage([595, 842]);
+
+    // Círculo aproximado por 4 curvas de Bézier, escrito curva a curva — o
+    // mesmo padrão que os geradores de cartão-resposta produzem, uma vez para
+    // cada bolinha, em vez de reaproveitar um símbolo.
+    const r = 9.6180339, k = r * 0.5522847;
+    const curvas = (x, y) => [
+      `${x + r} ${y} m`,
+      `${x + r} ${y + k} ${x + k} ${y + r} ${x} ${y + r} c`,
+      `${x - k} ${y + r} ${x - r} ${y + k} ${x - r} ${y} c`,
+      `${x - r} ${y - k} ${x - k} ${y - r} ${x} ${y - r} c`,
+      `${x + k} ${y - r} ${x + r} ${y - k} ${x + r} ${y} c`,
+      'h', 'S',
+    ].join('\n');
+
+    const partes = ['0 0 0 RG', '1 w'];
+    for(let i = 0; i < copias; i++){
+      partes.push(curvas(60 + (i % 10) * 48.5, 780 - Math.floor(i / 10) * 47.5));
+    }
+    const txt = partes.join('\n') + '\n';
+    const dados = new Uint8Array(txt.length);
+    for(let i = 0; i < txt.length; i++) dados[i] = txt.charCodeAt(i);
+    p.node.set(PDFName.of('Contents'), doc.context.register(doc.context.flateStream(dados)));
+
+    const bytes = await doc.save();
+    let s = ''; for(const b of bytes) s += String.fromCharCode(b);
+    return btoa(s);
+  }, { copias });
+  return b64ParaArquivo(b64, destino);
+}
+
 // Rasteriza um PDF e devolve outro PDF que simula uma digitalização: sombra
 // diagonal do scanner, ruído e recompressão JPEG.
 export async function fixtureDigitalizado(page, origem, destino, dpi = 300){
@@ -135,7 +173,7 @@ export async function fixtureDigitalizado(page, origem, destino, dpi = 300){
 // Executa o app pela interface e devolve os bytes do PDF gerado, lendo direto
 // do blob do link de download (dispensa a plumbing de download do Playwright).
 export async function gerar(page, arquivos, opcoes = {}){
-  const { preset = 'merge', dpi, quality, gray, threshold, nome } = opcoes;
+  const { preset = 'merge', dpi, quality, gray, threshold, nome, otimizar } = opcoes;
   await page.evaluate(() => {
     document.getElementById('clearBtn').click();
   });
@@ -154,6 +192,7 @@ export async function gerar(page, arquivos, opcoes = {}){
   await set('quality', quality, 'input');
   await set('grayscale', gray, 'change');
   await set('threshold', threshold, 'input');
+  await set('otimizar', otimizar, 'change');
   if(nome) await page.fill('#outName', nome);
 
   await page.click('#runBtn');
@@ -231,6 +270,37 @@ export async function medir(page, pdfBytes, dpi = 300){
       fiduciais: S.fiduciais.map(y => caixa(45, y, S.fiducialLado)),
     };
   }, { entrada, dpi, S: { ...SHEET, bubbleX: undefined, bubbleY: undefined } });
+}
+
+// Renderiza a mesma página dos dois PDFs e mede a diferença de pixels.
+export async function comparar(page, pdfA, pdfB, pagina = 1, dpi = 150){
+  return page.evaluate(async ({ a, b, pagina, dpi }) => {
+    const render = async (b64) => {
+      const pdf = await pdfjsLib.getDocument({ data: Uint8Array.from(atob(b64), c => c.charCodeAt(0)) }).promise;
+      const pg = await pdf.getPage(pagina);
+      const vp = pg.getViewport({ scale: dpi / 72 });
+      const cv = document.createElement('canvas');
+      cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      const texto = (await pg.getTextContent()).items.map(t => t.str).join(' ').replace(/\s+/g,' ').trim();
+      return { img: ctx.getImageData(0, 0, cv.width, cv.height), texto, paginas: pdf.numPages };
+    };
+    const A = await render(a), B = await render(b);
+    if(A.img.width !== B.img.width || A.img.height !== B.img.height){
+      return { erro: 'tamanhos diferentes', mesmoTexto: A.texto === B.texto };
+    }
+    let diferentes = 0, maior = 0;
+    for(let k = 0; k < A.img.data.length; k += 4){
+      const d = Math.abs(A.img.data[k] - B.img.data[k]);
+      if(d > maior) maior = d;
+      if(d > 32) diferentes++;
+    }
+    const total = A.img.data.length / 4;
+    return { diferentes, pct: diferentes / total * 100, maior,
+             mesmoTexto: A.texto === B.texto, paginasA: A.paginas, paginasB: B.paginas };
+  }, { a: pdfA.toString('base64'), b: pdfB.toString('base64'), pagina, dpi });
 }
 
 export function limparTmp(){

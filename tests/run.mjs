@@ -4,7 +4,7 @@
 // variável CHROME_PATH apontando para um Chrome/Chromium já instalado.
 import fs from 'fs';
 import path from 'path';
-import { abrir, gerar, medir, fixtureCartao, fixtureDigitalizado, limparTmp, TMP, SHEET } from './helpers.mjs';
+import { abrir, gerar, medir, comparar, fixtureCartao, fixtureDigitalizado, fixtureFormasRepetidas, limparTmp, TMP, SHEET } from './helpers.mjs';
 
 let passou = 0, falhou = 0;
 const ok = (nome, condicao, detalhe = '') => {
@@ -56,6 +56,34 @@ try{
   ok('preserva o tamanho da página', mUnido.largura === SHEET.W && mUnido.altura === SHEET.H,
     `${mUnido.largura}x${mUnido.altura} pt`);
   ok('nome do arquivo ganha .pdf', (await page.getAttribute('#downloadLink', 'download')) === 'unido.pdf');
+
+  // ------------------------------------------- otimização vetorial sem perda
+  console.log('\nmodo "Apenas unir" com otimização de formas repetidas');
+  const repetido = await fixtureFormasRepetidas(page, path.join(TMP, 'formas-repetidas.pdf'));
+  const semCarimbo = await gerar(page, [repetido, repetido], { preset: 'merge', otimizar: false });
+  const comCarimbo = await gerar(page, [repetido, repetido], { preset: 'merge', otimizar: true });
+  const relato = (await page.textContent('#status')).trim();
+  const cmpCarimbo = await comparar(page, semCarimbo, comCarimbo);
+  console.log(`  formas repetidas: sem carimbo ${kb(semCarimbo.length)} · com carimbo ${kb(comCarimbo.length)}`);
+  const carimbou = /(\d[\d.]*) desenhos repetidos unificados em (\d+) formas/.exec(relato);
+  ok('carimbo entra em ação em formas repetidas', !!carimbou, relato);
+  ok('carimbo não aumenta o arquivo', comCarimbo.length <= semCarimbo.length,
+    `${kb(comCarimbo.length)} <= ${kb(semCarimbo.length)}`);
+  ok('carimbo não muda a imagem', cmpCarimbo.pct !== undefined && cmpCarimbo.pct < 0.05,
+    cmpCarimbo.pct === undefined ? JSON.stringify(cmpCarimbo) : `${cmpCarimbo.pct.toFixed(3)}% dos pixels`);
+  ok('carimbo não muda o texto', cmpCarimbo.mesmoTexto === true);
+
+  const semOtim = await gerar(page, [vetorial, vetorial, vetorial], { preset: 'merge', otimizar: false });
+  const comOtim = await gerar(page, [vetorial, vetorial, vetorial], { preset: 'merge', otimizar: true });
+  const cmp = await comparar(page, semOtim, comOtim);
+  console.log(`  sem otimizar ${kb(semOtim.length)} · otimizado ${kb(comOtim.length)}`);
+  ok('otimizar não muda a contagem de páginas', cmp.paginasA === cmp.paginasB,
+    `${cmp.paginasA} vs ${cmp.paginasB}`);
+  ok('otimizar não muda o texto', cmp.mesmoTexto === true);
+  ok('otimizar não muda a imagem da página', cmp.pct !== undefined && cmp.pct < 0.05,
+    cmp.pct === undefined ? JSON.stringify(cmp) : `${cmp.pct.toFixed(3)}% dos pixels, maior diferença ${cmp.maior}`);
+  ok('otimizar não aumenta o arquivo', comOtim.length <= semOtim.length,
+    `${kb(comOtim.length)} <= ${kb(semOtim.length)}`);
 
   // ------------------------------------------------------------- modo P/B
   console.log('\nmodo "Digitalizado P/B" (o que vai para auditoria)');

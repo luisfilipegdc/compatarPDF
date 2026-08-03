@@ -88,14 +88,21 @@ São **6× de diferença** sem nenhuma diferença visual: num PDF único a fonte
 recursos compartilhados ficam guardados uma vez só; em arquivos separados, cada
 um carrega a sua própria cópia.
 
-E isso **não dá para consertar depois**. Unir os arquivos separados nesta
-ferramenta não desfaz a duplicação — o pdf-lib não unifica esses recursos. Foi
-testado unificar os objetos idênticos byte a byte: o arquivo caía de 445 KB para
-166 KB, mas os cartões usam fontes Type3 (cada glifo é um stream próprio), e
-fazer duas fontes distintas passarem a compartilhar os mesmos glifos quebrou a
-extração de texto da segunda página em diante — o nome do aluno saía como
-`&/$5$` em vez de `CLARA`. O PDF continuava renderizando certo, o que torna o
-problema silencioso. Por isso a otimização não foi incluída na ferramenta.
+Parte disso **dá para consertar depois, parte não**:
+
+- **A repetição de desenhos, sim.** O modo *Apenas unir* carimba as formas
+  repetidas: num cartão-resposta real isso levou 8,1 MB a 774 KB, 90% menor,
+  sem mudar um pixel. É por isso que o passo de gerar as bolinhas com poucos
+  segmentos importa menos do que parecia — mas gerar direito continua melhor,
+  porque evita 10 mil operadores por página desde o começo.
+- **A duplicação de fontes, não.** Cada arquivo separado traz sua própria cópia
+  das fontes embutidas e isso permanece. Foi testado unificar os objetos
+  idênticos byte a byte: o arquivo caía de 445 KB para 166 KB, mas os cartões
+  usam fontes Type3 (cada glifo é um stream próprio), e fazer duas fontes
+  distintas compartilharem os mesmos glifos quebrou a extração de texto da
+  segunda página em diante — o nome do aluno saía como `&/$5$` em vez de
+  `CLARA`. O PDF continuava renderizando certo, o que torna o problema
+  silencioso. Por isso essa parte ficou de fora.
 
 Ou seja: peça o lote inteiro em um PDF só, desde a geração.
 

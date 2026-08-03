@@ -218,6 +218,12 @@
         <label class="chk"><input type="checkbox" id="grayscale" checked> Escala de cinza (menor tamanho)</label>
       </div>
     </fieldset>
+    <fieldset id="mergeOpts">
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="otimizar" checked>
+          Otimizar formas repetidas (mantém o vetor, sem perder qualidade)</label>
+      </div>
+    </fieldset>
     <fieldset id="pbOpts">
       <div class="row">
         <label for="threshold">Limiar preto/branco</label>
@@ -309,7 +315,9 @@ const emptyMsg = $('emptyMsg'), totalInfo = $('totalInfo');
 const runBtn = $('runBtn'), cancelBtn = $('cancelBtn'), sortBtn = $('sortBtn'), clearBtn = $('clearBtn');
 const dpiEl = $('dpi'), dpiVal = $('dpiVal'), qualityEl = $('quality'), qualityVal = $('qualityVal');
 const grayscaleEl = $('grayscale'), rasterOpts = $('rasterOpts'), modeHint = $('modeHint');
-const jpegOpts = $('jpegOpts'), pbOpts = $('pbOpts');
+const jpegOpts = $('jpegOpts'), pbOpts = $('pbOpts'), mergeOpts = $('mergeOpts');
+const otimizarEl = $('otimizar');
+let ultimaOtimizacao = null;
 const thresholdEl = $('threshold'), thresholdVal = $('thresholdVal');
 const outNameEl = $('outName'), limitEl = $('limit');
 const progressWrap = $('progressWrap'), progressBar = $('progressBar'), progressFill = $('progressFill');
@@ -475,6 +483,7 @@ dpiEl.addEventListener('input', () => { dpiVal.textContent = dpiEl.value + ' dpi
 qualityEl.addEventListener('input', () => { qualityVal.textContent = qualityEl.value + '%'; onManualTweak(); });
 grayscaleEl.addEventListener('change', onManualTweak);
 thresholdEl.addEventListener('input', () => { thresholdVal.textContent = thresholdEl.value + '%'; onManualTweak(); });
+otimizarEl.addEventListener('change', onManualTweak);
 document.querySelectorAll('input[name=preset]').forEach(r => r.addEventListener('change', () => applyPreset(r.value)));
 
 function onManualTweak(){ saveSettings(); updateHint(); }
@@ -496,13 +505,16 @@ function applyPreset(value){
 function syncControls(){
   const mode = currentPreset();
   rasterOpts.disabled = mode === 'merge';
+  mergeOpts.disabled = mode !== 'merge';
   jpegOpts.disabled = mode === 'merge' || mode === 'pb';
   pbOpts.disabled = mode !== 'pb';
 }
 
 const HINTS = {
-  merge: 'As páginas são copiadas como estão: o texto continua selecionável e a qualidade é preservada, '
-       + 'mas o arquivo final é a soma dos originais.',
+  merge: 'As páginas são copiadas como estão: o texto continua selecionável e nada perde qualidade. '
+       + 'A otimização de formas repetidas troca cada desenho que se repete (as bolinhas de um cartão-resposta, '
+       + 'por exemplo) por uma única cópia reaproveitada — continua vetorial, só sem a repetição. '
+       + 'Em documentos sem esse tipo de repetição ela simplesmente não muda nada.',
   pb: 'Cada página vira preto e branco puro, sem tons de cinza: traço nítido e arquivo muito menor que o JPEG. '
     + 'Feito para documentos digitalizados — cartão-resposta preenchido, formulário, contrato assinado. '
     + 'Atenção: o que estava impresso em cinza-claro (como as letras dentro das bolhas de um cartão em branco) '
@@ -523,6 +535,7 @@ function saveSettings(){
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
       preset: currentPreset(), dpi: dpiEl.value, quality: qualityEl.value,
       grayscale: grayscaleEl.checked, threshold: thresholdEl.value, limit: limitEl.value,
+      otimizar: otimizarEl.checked,
     }));
   }catch(e){ /* modo privado / storage indisponível */ }
 }
@@ -537,6 +550,7 @@ function loadSettings(){
     if(s.quality) qualityEl.value = s.quality;
     if(typeof s.grayscale === 'boolean') grayscaleEl.checked = s.grayscale;
     if(s.threshold) thresholdEl.value = s.threshold;
+    if(typeof s.otimizar === 'boolean') otimizarEl.checked = s.otimizar;
     if(s.limit != null) limitEl.value = s.limit;
   }
   dpiVal.textContent = dpiEl.value + ' dpi';
@@ -722,6 +736,261 @@ function toGrayscale(ctx, w, h){
   ctx.putImageData(img, 0, 0);
 }
 
+// -------------------------------------- otimização vetorial sem perda
+// Cartões-resposta gerados por sistema desenham cada bolinha como uma
+// sequência própria de curvas de Bézier, repetida centenas de vezes por
+// página. Aqui cada forma repetida vira um Form XObject desenhado uma vez e
+// referenciado nos demais lugares. Continua tudo vetorial: o texto segue
+// selecionável e o traço, nítido em qualquer zoom.
+
+const CONSTROI = new Set(['l','c','v','y','h','m']);   // constroem o path
+const PINTA = new Set(['f','f*','F','S','s','B','B*','b','b*','n']);
+const PARES = { m:1, l:1, c:3, v:2, y:2 };
+const DELIM = new Set([0x28,0x29,0x3c,0x3e,0x5b,0x5d,0x7b,0x7d,0x2f,0x25]);
+const ESPACO = new Set([0x00,0x09,0x0a,0x0c,0x0d,0x20]);
+
+// Chave de comparação: arredondada, para que ruído de ponto flutuante do
+// gerador não faça duas bolinhas idênticas virarem formas diferentes.
+function fmt(v){
+  let s = v.toFixed(1);
+  if(s.includes('.')) s = s.replace(/0+$/,'').replace(/\.$/,'');
+  return (s === '' || s === '-0') ? '0' : s;
+}
+
+// Já o desenho gravado usa a precisão original: arredondar o traçado desloca
+// a forma por fração de pixel, e isso aparece num diff de imagem.
+function exato(v){
+  const s = Math.abs(v) < 1e-6 ? '0' : String(Math.round(v * 1e6) / 1e6);
+  return s === '-0' ? '0' : s;
+}
+
+// Divide o content stream em instruções (operandos + operador), guardando o
+// intervalo de bytes de cada uma para poder reescrever sem tocar no resto.
+function instrucoes(bytes){
+  const out = [];
+  let i = 0, n = bytes.length;
+  let operandos = [], nums = [], inicio = -1;
+  const ehEspaco = c => ESPACO.has(c);
+  while(i < n){
+    const c = bytes[i];
+    if(ehEspaco(c)){ i++; continue; }
+    const ini = i;
+    if(c === 0x25){                                  // comentário
+      while(i < n && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i++;
+      continue;
+    }
+    if(c === 0x28){                                  // string literal
+      let nivel = 1; i++;
+      while(i < n && nivel > 0){
+        if(bytes[i] === 0x5c) i += 2;
+        else { if(bytes[i] === 0x28) nivel++; else if(bytes[i] === 0x29) nivel--; i++; }
+      }
+      if(inicio < 0) inicio = ini;
+      operandos.push('str'); nums = [];
+      continue;
+    }
+    if(c === 0x3c && bytes[i+1] === 0x3c){            // dicionário
+      i += 2; if(inicio < 0) inicio = ini; operandos.push('dict'); nums = []; continue;
+    }
+    if(c === 0x3e && bytes[i+1] === 0x3e){ i += 2; continue; }
+    if(c === 0x3c){                                   // string hex
+      i++; while(i < n && bytes[i] !== 0x3e) i++; i++;
+      if(inicio < 0) inicio = ini; operandos.push('hex'); nums = []; continue;
+    }
+    if(c === 0x5b || c === 0x5d){                     // array
+      i++; if(inicio < 0) inicio = ini; operandos.push('arr'); continue;
+    }
+    if(c === 0x2f){                                   // nome
+      i++; while(i < n && !ESPACO.has(bytes[i]) && !DELIM.has(bytes[i])) i++;
+      if(inicio < 0) inicio = ini; operandos.push('nome'); nums = []; continue;
+    }
+    if((c >= 0x30 && c <= 0x39) || c === 0x2b || c === 0x2d || c === 0x2e){
+      let j = i;
+      while(j < n && !ESPACO.has(bytes[j]) && !DELIM.has(bytes[j])) j++;
+      let s = '';
+      for(let k = i; k < j; k++) s += String.fromCharCode(bytes[k]);
+      const v = parseFloat(s);
+      if(inicio < 0) inicio = ini;
+      operandos.push(v); nums.push(isNaN(v) ? 0 : v);
+      i = j; continue;
+    }
+    // operador
+    let j = i;
+    while(j < n && !ESPACO.has(bytes[j]) && !DELIM.has(bytes[j])) j++;
+    let op = '';
+    for(let k = i; k < j; k++) op += String.fromCharCode(bytes[k]);
+    if(inicio < 0) inicio = ini;
+    out.push({ op, nums, ini: inicio, fim: j });
+    operandos = []; nums = []; inicio = -1;
+    i = j;
+  }
+  return out;
+}
+
+// Localiza blocos de path autocontidos e normaliza as coordenadas como deltas
+// do ponto inicial, para que a mesma forma em posições diferentes gere a
+// mesma chave.
+function blocos(instr){
+  const achados = [];
+  let i = 0;
+  const n = instr.length;
+  while(i < n){
+    if(instr[i].op !== 'm' || instr[i].nums.length !== 2){ i++; continue; }
+    const x0 = instr[i].nums[0], y0 = instr[i].nums[1];
+    let j = i, ok = false, fechou = false;
+    const norm = [], desenho = [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    while(j < n){
+      const it = instr[j];
+      if(CONSTROI.has(it.op)){
+        if(it.op === 'h'){ norm.push('h'); desenho.push('h'); j++; continue; }
+        const k = PARES[it.op] || 0;
+        if(it.nums.length !== k * 2) break;
+        const partes = [], exatas = [];
+        for(let t = 0; t < k; t++){
+          const dx = it.nums[2*t] - x0, dy = it.nums[2*t+1] - y0;
+          if(dx < minX) minX = dx; if(dy < minY) minY = dy;
+          if(dx > maxX) maxX = dx; if(dy > maxY) maxY = dy;
+          partes.push(fmt(dx), fmt(dy));
+          exatas.push(exato(dx), exato(dy));
+        }
+        norm.push(partes.join(' ') + ' ' + it.op);
+        desenho.push(exatas.join(' ') + ' ' + it.op);
+        j++; continue;
+      }
+      if(PINTA.has(it.op) && it.nums.length === 0){ norm.push(it.op); desenho.push(it.op); j++; fechou = true; }
+      break;
+    }
+    ok = fechou && norm.length > 6 && minX < Infinity;
+    if(ok){
+      const chave = norm.join('\n');
+      // abaixo disso o próprio desenho é mais curto que a chamada que o
+      // substituiria ("q 1 0 0 1 x y cm /Nome Do Q", ~30 caracteres)
+      if(chave.length > 120){
+        achados.push({ ini: instr[i].ini, fim: instr[j-1].fim, chave,
+                       desenho: desenho.join('\n'), x0, y0,
+                       bbox: [minX, minY, maxX, maxY] });
+        i = j; continue;
+      }
+    }
+    i = (j > i) ? j : i + 1;
+  }
+  return achados;
+}
+
+function conteudoDaPagina(pagina){
+  const PDFLib = window.PDFLib;
+  const { PDFArray, decodePDFRawStream } = PDFLib;
+  const c = pagina.node.Contents();
+  if(!c) return null;
+  const pedacos = [];
+  if(c instanceof PDFArray){
+    for(let i = 0; i < c.size(); i++){
+      const s = pagina.node.context.lookup(c.get(i));
+      if(s) pedacos.push(decodePDFRawStream(s).decode());
+    }
+  }else{
+    pedacos.push(decodePDFRawStream(c).decode());
+  }
+  if(!pedacos.length) return null;
+  if(pedacos.length === 1) return pedacos[0];
+  const total = pedacos.reduce((s,p) => s + p.length + 1, 0);
+  const juntos = new Uint8Array(total);
+  let p = 0;
+  for(const pe of pedacos){ juntos.set(pe, p); p += pe.length; juntos[p++] = 0x0a; }
+  return juntos;
+}
+
+async function otimizarVetores(doc, aoAndar){
+  const PDFLib = window.PDFLib;
+  const { PDFName, PDFRawStream } = PDFLib;
+  const paginas = doc.getPages();
+  const conteudos = [], listas = [], contagem = new Map();
+
+  for(let i = 0; i < paginas.length; i++){
+    let bytes = null, achados = [];
+    try{
+      bytes = conteudoDaPagina(paginas[i]);
+      if(bytes) achados = blocos(instrucoes(bytes));
+    }catch(e){ bytes = null; achados = []; }
+    conteudos.push(bytes); listas.push(achados);
+    for(const b of achados) contagem.set(b.chave, (contagem.get(b.chave) || 0) + 1);
+    if(aoAndar) await aoAndar(i + 1, paginas.length, 'analisando');
+  }
+
+  const escolhidas = new Set();
+  for(const [chave, n] of contagem) if(n >= 5) escolhidas.add(chave);
+  if(!escolhidas.size) return { formas: 0, trocas: 0 };
+
+  const refDaForma = new Map();
+  let trocas = 0;
+
+  for(let i = 0; i < paginas.length; i++){
+    const bytes = conteudos[i], achados = listas[i];
+    if(!bytes || !achados.length) continue;
+    const usadas = achados.filter(b => escolhidas.has(b.chave));
+    if(!usadas.length) continue;
+
+    // cria o XObject de cada forma nova e registra o nome na página
+    const nomes = new Map();
+    for(const b of usadas){
+      if(nomes.has(b.chave)) continue;
+      let ref = refDaForma.get(b.chave);
+      if(!ref){
+        const larg = Math.max(b.bbox[2]-b.bbox[0], b.bbox[3]-b.bbox[1]);
+        const pad = Math.max(8, larg * 0.5);
+        // entradas do dicionário como objeto simples: o flateStream converte
+        const dict = {
+          Type: 'XObject', Subtype: 'Form', FormType: 1,
+          BBox: [b.bbox[0]-pad, b.bbox[1]-pad, b.bbox[2]+pad, b.bbox[3]+pad],
+          Resources: {},
+        };
+        const dados = new Uint8Array(b.desenho.length);
+        for(let k = 0; k < b.desenho.length; k++) dados[k] = b.desenho.charCodeAt(k) & 0xff;
+        ref = doc.context.register(doc.context.flateStream(dados, dict));
+        refDaForma.set(b.chave, ref);
+      }
+      nomes.set(b.chave, paginas[i].node.newXObject('Zx', ref));
+    }
+
+    // reescreve o stream trocando cada bloco por "q ... cm /Nome Do Q"
+    const partes = [];
+    let pos = 0;
+    for(const b of usadas){
+      if(b.ini < pos) continue;
+      partes.push(bytes.subarray(pos, b.ini));
+      const nome = nomes.get(b.chave).asString();   // já vem com "/"
+      const txt = `q 1 0 0 1 ${exato(b.x0)} ${exato(b.y0)} cm ${nome} Do Q\n`;
+      const buf = new Uint8Array(txt.length);
+      for(let k = 0; k < txt.length; k++) buf[k] = txt.charCodeAt(k);
+      partes.push(buf);
+      pos = b.fim;
+      trocas++;
+    }
+    partes.push(bytes.subarray(pos));
+
+    let tam = 0; for(const p of partes) tam += p.length;
+    const novo = new Uint8Array(tam);
+    let p = 0; for(const pe of partes){ novo.set(pe, p); p += pe.length; }
+
+    const antigo = paginas[i].node.get(PDFName.of('Contents'));
+    const ref = doc.context.register(doc.context.flateStream(novo));
+    paginas[i].node.set(PDFName.of('Contents'), ref);
+    // remove o stream antigo: o pdf-lib grava todo objeto registrado, e sem
+    // isso o arquivo ficaria com as duas versões do conteúdo
+    const { PDFArray, PDFRef } = PDFLib;
+    if(antigo instanceof PDFRef) doc.context.delete(antigo);
+    else if(antigo instanceof PDFArray){
+      for(let k = 0; k < antigo.size(); k++){
+        const r0 = antigo.get(k);
+        if(r0 instanceof PDFRef) doc.context.delete(r0);
+      }
+    }
+    if(aoAndar) await aoAndar(i + 1, paginas.length, 'otimizando');
+  }
+  return { formas: refDaForma.size, trocas };
+}
+
 // Junta os PDFs sem recomprimir: preserva texto, fontes e vetores.
 async function mergeOnly(onProgress){
   const { PDFDocument } = PDFLib;
@@ -730,11 +999,24 @@ async function mergeOnly(onProgress){
   for(let i = 0; i < files.length; i++){
     checkCancelled();
     const item = files[i];
-    onProgress((i / files.length) * 100, `Copiando ${item.name}…`);
+    onProgress((i / files.length) * 45, `Copiando ${item.name}…`);
     const src = await PDFDocument.load(await item.file.arrayBuffer(), { ignoreEncryption: true });
     const pages = await outDoc.copyPages(src, src.getPageIndices());
     pages.forEach(p => outDoc.addPage(p));
     await nextFrame();
+  }
+
+  if(otimizarEl.checked){
+    const r = await otimizarVetores(outDoc, async (feito, total, etapa) => {
+      checkCancelled();
+      const base = etapa === 'analisando' ? 45 : 70;
+      onProgress(base + (feito / total) * 25,
+        `${etapa === 'analisando' ? 'Procurando formas repetidas' : 'Otimizando'} — página ${feito} de ${total}`);
+      if(feito % 8 === 0) await nextFrame();
+    });
+    ultimaOtimizacao = r;
+  }else{
+    ultimaOtimizacao = null;
   }
   return outDoc;
 }
@@ -840,6 +1122,10 @@ runBtn.addEventListener('click', async () => {
     downloadLink.href = state.outUrl;
     downloadLink.download = outFileName();
     resultSize.textContent = fmtBytes(blob.size);
+    if(ultimaOtimizacao && ultimaOtimizacao.formas){
+      statusEl.textContent = `${ultimaOtimizacao.trocas.toLocaleString('pt-BR')} desenhos repetidos `
+        + `substituídos por ${ultimaOtimizacao.formas} formas reaproveitadas.`;
+    }
     const saved = inputBytes - blob.size;
     resultSaved.textContent = saved > 0
       ? `${Math.round((saved / inputBytes) * 100)}% menor que os originais (${fmtBytes(inputBytes)})`
@@ -853,7 +1139,9 @@ runBtn.addEventListener('click', async () => {
             ? 'Experimente um dos modos de compressão.'
             : 'Tente reduzir o DPI ou a qualidade.'));
     }
-    setProgress(100, 'Concluído.');
+    setProgress(100, ultimaOtimizacao && ultimaOtimizacao.formas
+      ? `Concluído — ${ultimaOtimizacao.trocas.toLocaleString('pt-BR')} desenhos repetidos unificados em ${ultimaOtimizacao.formas} formas.`
+      : 'Concluído.');
   }catch(err){
     if(err instanceof CancelledError){
       setProgress(0, 'Cancelado.');
