@@ -7,3 +7,6 @@ Thumbs.db
 
 # saídas de teste
 out-*.pdf
+
+# saídas dos testes
+tests/tmp/

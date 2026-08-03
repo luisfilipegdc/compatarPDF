@@ -104,3 +104,28 @@ index.html   aplicação inteira (interface + pdf.js + pdf-lib embutidos)
   PDF de saída (MIT)
 
 As notas de licença originais estão preservadas dentro do `index.html`.
+
+## Gerando os cartões-resposta
+
+Se você também gera os cartões, o tamanho do PDF é decidido lá, não aqui: entre
+dois lotes reais medidos neste projeto, um saiu com 14 KB por página e outro com
+287 KB por página — 21× maior, pelo modo como as bolhas foram desenhadas. Em um
+limite de 30 MB, isso é a diferença entre caber 2.100 páginas e caber 104.
+
+O padrão que dá certo, junto com um prompt pronto para o gerador, está em
+[docs/PROMPT-GERACAO-CARTOES.md](docs/PROMPT-GERACAO-CARTOES.md).
+
+## Testes
+
+```
+npm install
+npx playwright install chromium   # ou defina CHROME_PATH para um Chrome existente
+npm test
+```
+
+A suíte sobe a página em um Chromium, monta os PDFs de teste com o próprio
+pdf-lib embutido (nenhuma fixture binária no repositório) e confere, entre
+outras coisas: nome de arquivo não vira HTML, PDF inválido é sinalizado, o modo
+*Apenas unir* preserva texto e tamanho de página, e o modo *Digitalizado P/B*
+mantém as 10 marcas preenchidas, sem falso positivo e com as marcas fiduciais
+sólidas.

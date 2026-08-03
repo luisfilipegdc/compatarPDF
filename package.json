@@ -1,0 +1,13 @@
+{
+  "name": "unir-comprimir-pdfs",
+  "version": "1.0.0",
+  "description": "Une e comprime PDFs inteiramente no navegador, sem enviar arquivos a servidor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}
