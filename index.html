@@ -195,7 +195,7 @@
   <div class="panel">
     <h2>2. Qualidade e tamanho</h2>
     <div class="presets" id="presets">
-      <label><input type="radio" name="preset" value="merge" checked><span class="t">Apenas unir</span><span class="d">Mantém o texto e a qualidade original</span></label>
+      <label><input type="radio" name="preset" value="merge" checked><span class="t">Apenas unir</span><span class="d">Padrão — mantém o vetor e otimiza sem perder qualidade</span></label>
       <label><input type="radio" name="preset" value="alta"><span class="t">Alta</span><span class="d">150 dpi, colorido</span></label>
       <label><input type="radio" name="preset" value="media"><span class="t">Média</span><span class="d">120 dpi, cinza</span></label>
       <label><input type="radio" name="preset" value="pequena"><span class="t">Menor</span><span class="d">95 dpi, cinza</span></label>
@@ -283,7 +283,9 @@
 // ---------------------------------------------------------------- constantes
 const MAX_CANVAS_PIXELS = 24e6;   // limite prático de canvas (Safari/mobile)
 const MAX_PB_PIXELS = 16e6;   // binarização lê a página inteira de uma vez
-const SETTINGS_KEY = 'unir-pdfs:v2';
+// Ao mudar o padrão de fábrica, troque a versão da chave: as preferências
+// salvas de antes são descartadas e todo mundo passa a abrir no modo novo.
+const SETTINGS_KEY = 'unir-pdfs:v3';
 const PRESETS = {
   alta:    { dpi: 150, quality: 75, grayscale: false },
   media:   { dpi: 120, quality: 50, grayscale: true  },
