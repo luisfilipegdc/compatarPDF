@@ -195,17 +195,20 @@
   <div class="panel">
     <h2>2. Qualidade e tamanho</h2>
     <div class="presets" id="presets">
-      <label><input type="radio" name="preset" value="merge"><span class="t">Apenas unir</span><span class="d">Mantém o texto e a qualidade original</span></label>
+      <label><input type="radio" name="preset" value="merge" checked><span class="t">Apenas unir</span><span class="d">Mantém o texto e a qualidade original</span></label>
       <label><input type="radio" name="preset" value="alta"><span class="t">Alta</span><span class="d">150 dpi, colorido</span></label>
-      <label><input type="radio" name="preset" value="media" checked><span class="t">Média</span><span class="d">120 dpi, cinza</span></label>
+      <label><input type="radio" name="preset" value="media"><span class="t">Média</span><span class="d">120 dpi, cinza</span></label>
       <label><input type="radio" name="preset" value="pequena"><span class="t">Menor</span><span class="d">95 dpi, cinza</span></label>
+      <label><input type="radio" name="preset" value="pb"><span class="t">Digitalizado P/B</span><span class="d">200 dpi, 1 bit — cartão-resposta e formulários</span></label>
     </div>
     <fieldset id="rasterOpts">
       <div class="row">
         <label for="dpi">Resolução (DPI)</label>
-        <input type="range" id="dpi" min="70" max="200" value="120" step="5">
+        <input type="range" id="dpi" min="70" max="300" value="120" step="5">
         <div class="val" id="dpiVal">120 dpi</div>
       </div>
+    </fieldset>
+    <fieldset id="jpegOpts">
       <div class="row">
         <label for="quality">Qualidade JPEG</label>
         <input type="range" id="quality" min="20" max="90" value="50" step="5">
@@ -213,6 +216,13 @@
       </div>
       <div class="row">
         <label class="chk"><input type="checkbox" id="grayscale" checked> Escala de cinza (menor tamanho)</label>
+      </div>
+    </fieldset>
+    <fieldset id="pbOpts">
+      <div class="row">
+        <label for="threshold">Limiar preto/branco</label>
+        <input type="range" id="threshold" min="2" max="25" value="12" step="1">
+        <div class="val" id="thresholdVal">12%</div>
       </div>
     </fieldset>
     <p class="hint" id="modeHint"></p>
@@ -266,11 +276,13 @@
 
 // ---------------------------------------------------------------- constantes
 const MAX_CANVAS_PIXELS = 24e6;   // limite prático de canvas (Safari/mobile)
-const SETTINGS_KEY = 'unir-pdfs:v1';
+const MAX_PB_PIXELS = 16e6;   // binarização lê a página inteira de uma vez
+const SETTINGS_KEY = 'unir-pdfs:v2';
 const PRESETS = {
   alta:    { dpi: 150, quality: 75, grayscale: false },
   media:   { dpi: 120, quality: 50, grayscale: true  },
   pequena: { dpi:  95, quality: 35, grayscale: true  },
+  pb:      { dpi: 200 },
 };
 
 // worker do pdf.js a partir do script embutido (mantém o arquivo autocontido)
@@ -297,6 +309,8 @@ const emptyMsg = $('emptyMsg'), totalInfo = $('totalInfo');
 const runBtn = $('runBtn'), cancelBtn = $('cancelBtn'), sortBtn = $('sortBtn'), clearBtn = $('clearBtn');
 const dpiEl = $('dpi'), dpiVal = $('dpiVal'), qualityEl = $('quality'), qualityVal = $('qualityVal');
 const grayscaleEl = $('grayscale'), rasterOpts = $('rasterOpts'), modeHint = $('modeHint');
+const jpegOpts = $('jpegOpts'), pbOpts = $('pbOpts');
+const thresholdEl = $('threshold'), thresholdVal = $('thresholdVal');
 const outNameEl = $('outName'), limitEl = $('limit');
 const progressWrap = $('progressWrap'), progressBar = $('progressBar'), progressFill = $('progressFill');
 const statusEl = $('status'), warnEl = $('warn');
@@ -460,6 +474,7 @@ clearBtn.onclick = () => {
 dpiEl.addEventListener('input', () => { dpiVal.textContent = dpiEl.value + ' dpi'; onManualTweak(); });
 qualityEl.addEventListener('input', () => { qualityVal.textContent = qualityEl.value + '%'; onManualTweak(); });
 grayscaleEl.addEventListener('change', onManualTweak);
+thresholdEl.addEventListener('input', () => { thresholdVal.textContent = thresholdEl.value + '%'; onManualTweak(); });
 document.querySelectorAll('input[name=preset]').forEach(r => r.addEventListener('change', () => applyPreset(r.value)));
 
 function onManualTweak(){ saveSettings(); updateHint(); }
@@ -468,18 +483,38 @@ function applyPreset(value){
   const p = PRESETS[value];
   if(p){
     dpiEl.value = p.dpi; dpiVal.textContent = p.dpi + ' dpi';
-    qualityEl.value = p.quality; qualityVal.textContent = p.quality + '%';
-    grayscaleEl.checked = p.grayscale;
+    if(p.quality != null){
+      qualityEl.value = p.quality; qualityVal.textContent = p.quality + '%';
+      grayscaleEl.checked = p.grayscale;
+    }
   }
-  rasterOpts.disabled = !p;
+  syncControls();
   saveSettings();
   updateHint();
 }
 
+function syncControls(){
+  const mode = currentPreset();
+  rasterOpts.disabled = mode === 'merge';
+  jpegOpts.disabled = mode === 'merge' || mode === 'pb';
+  pbOpts.disabled = mode !== 'pb';
+}
+
+const HINTS = {
+  merge: 'As páginas são copiadas como estão: o texto continua selecionável e a qualidade é preservada, '
+       + 'mas o arquivo final é a soma dos originais.',
+  pb: 'Cada página vira preto e branco puro, sem tons de cinza: traço nítido e arquivo muito menor que o JPEG. '
+    + 'Feito para documentos digitalizados — cartão-resposta preenchido, formulário, contrato assinado. '
+    + 'Atenção: o que estava impresso em cinza-claro (como as letras dentro das bolhas de um cartão em branco) '
+    + 'vira preto sólido. Se o arquivo vai passar por leitura óptica, confira uma folha antes de converter o lote. '
+    + 'Não use em fotos. Se o resultado sair falhado, reduza o limiar; se sair sujo, aumente.',
+  jpeg: 'Cada página é convertida em imagem JPEG — o texto deixa de ser selecionável. Valores menores geram '
+      + 'arquivos menores, porém mais borrados. Para documentos digitalizados com traço fino, prefira o modo Digitalizado P/B.',
+};
+
 function updateHint(){
-  modeHint.textContent = currentPreset() === 'merge'
-    ? 'As páginas são copiadas como estão: o texto continua selecionável e a qualidade é preservada, mas o arquivo final tende a ser maior.'
-    : 'Cada página é convertida em imagem — o texto deixa de ser selecionável. Valores menores geram arquivos menores, porém mais borrados.';
+  const mode = currentPreset();
+  modeHint.textContent = HINTS[mode] || HINTS.jpeg;
 }
 
 // ------------------------------------------------------------ configurações
@@ -487,7 +522,7 @@ function saveSettings(){
   try{
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
       preset: currentPreset(), dpi: dpiEl.value, quality: qualityEl.value,
-      grayscale: grayscaleEl.checked, limit: limitEl.value,
+      grayscale: grayscaleEl.checked, threshold: thresholdEl.value, limit: limitEl.value,
     }));
   }catch(e){ /* modo privado / storage indisponível */ }
 }
@@ -501,11 +536,13 @@ function loadSettings(){
     if(s.dpi) dpiEl.value = s.dpi;
     if(s.quality) qualityEl.value = s.quality;
     if(typeof s.grayscale === 'boolean') grayscaleEl.checked = s.grayscale;
+    if(s.threshold) thresholdEl.value = s.threshold;
     if(s.limit != null) limitEl.value = s.limit;
   }
   dpiVal.textContent = dpiEl.value + ' dpi';
   qualityVal.textContent = qualityEl.value + '%';
-  rasterOpts.disabled = currentPreset() === 'merge';
+  thresholdVal.textContent = thresholdEl.value + '%';
+  syncControls();
   updateHint();
 }
 limitEl.addEventListener('change', saveSettings);
@@ -544,6 +581,138 @@ function canvasToJpegBytes(canvas, quality){
   });
 }
 
+// ------------------------------------------------- preto e branco (bitonal)
+// Estimativa do branco do papel por blocos. Usa o percentil 90 de cada bloco,
+// não a média: a média é puxada para baixo pela tinta em volta e faria o
+// impresso claro (letras cinza dentro das bolhas) cair do lado do branco.
+function backgroundGrid(lum, w, h, tile, pisoGlobal){
+  const gw = Math.ceil(w / tile), gh = Math.ceil(h / tile);
+  const bg = new Float32Array(gw * gh);
+  const hist = new Uint32Array(256);
+  for(let ty = 0; ty < gh; ty++){
+    const y0 = ty * tile, y1 = Math.min(y0 + tile, h);
+    for(let tx = 0; tx < gw; tx++){
+      const x0 = tx * tile, x1 = Math.min(x0 + tile, w);
+      hist.fill(0);
+      let n = 0;
+      for(let y = y0; y < y1; y++){
+        const row = y * w;
+        for(let x = x0; x < x1; x++){ hist[lum[row + x]]++; n++; }
+      }
+      let acc = 0, p = 255;
+      for(let v = 0, alvo = n * 0.9; v < 256; v++){
+        acc += hist[v];
+        if(acc >= alvo){ p = v; break; }
+      }
+      // bloco tomado por tinta (barra preta, foto): não deixa o "papel" ir junto
+      bg[ty * gw + tx] = Math.max(p, pisoGlobal);
+    }
+  }
+  // suaviza para não deixar emenda visível entre blocos
+  const suave = new Float32Array(gw * gh);
+  for(let y = 0; y < gh; y++){
+    for(let x = 0; x < gw; x++){
+      let s = 0, n = 0;
+      for(let dy = -1; dy <= 1; dy++){
+        for(let dx = -1; dx <= 1; dx++){
+          const yy = y + dy, xx = x + dx;
+          if(yy >= 0 && yy < gh && xx >= 0 && xx < gw){ s += bg[yy * gw + xx]; n++; }
+        }
+      }
+      suave[y * gw + x] = s / n;
+    }
+  }
+  return { bg: suave, gw, gh };
+}
+
+// Converte a página em 1 bit por pixel. Retorna as linhas empacotadas
+// (bit 1 = branco), no layout que o PDF espera para DeviceGray/1 bit.
+function binarize(ctx, w, h, tPct){
+  let data = ctx.getImageData(0, 0, w, h).data;
+  const lum = new Uint8Array(w * h);
+  const hist = new Uint32Array(256);
+  for(let i = 0, p = 0; i < lum.length; i++, p += 4){
+    const v = (data[p] * 0.299 + data[p+1] * 0.587 + data[p+2] * 0.114) | 0;
+    lum[i] = v; hist[v]++;
+  }
+  data = null;   // libera a ImageData antes do resto
+
+  // branco do papel na página inteira = percentil 90
+  let acc = 0, paper = 255;
+  for(let v = 0, alvo = lum.length * 0.9; v < 256; v++){
+    acc += hist[v];
+    if(acc >= alvo){ paper = Math.max(v, 1); break; }
+  }
+
+  const tile = Math.max(16, Math.round(Math.min(w, h) / 48));
+  const { bg, gw, gh } = backgroundGrid(lum, w, h, tile, paper * 0.5);
+  const t = tPct / 100;
+  const semprePreto = paper * 0.35;   // tinta densa: preserva marcas e áreas cheias
+
+  const rowBytes = (w + 7) >> 3;
+  const packed = new Uint8Array(rowBytes * h);
+  for(let y = 0; y < h; y++){
+    const o = y * rowBytes, row = y * w;
+    // amostragem bilinear do fundo, sem alocar buffer do tamanho da página
+    const fy = Math.min(Math.max((y + 0.5) / tile - 0.5, 0), gh - 1);
+    const gy = Math.min(fy | 0, gh - 1), gy1 = Math.min(gy + 1, gh - 1), wy = fy - gy;
+    for(let x = 0; x < w; x++){
+      const fx = Math.min(Math.max((x + 0.5) / tile - 0.5, 0), gw - 1);
+      const gx = Math.min(fx | 0, gw - 1), gx1 = Math.min(gx + 1, gw - 1), wx = fx - gx;
+      const b = bg[gy * gw + gx] * (1 - wx) * (1 - wy) + bg[gy * gw + gx1] * wx * (1 - wy)
+              + bg[gy1 * gw + gx] * (1 - wx) * wy + bg[gy1 * gw + gx1] * wx * wy;
+      const v = lum[row + x];
+      const preto = v < semprePreto || v < b * (1 - t);
+      if(!preto) packed[o + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return packed;
+}
+
+async function deflate(bytes){
+  if(typeof CompressionStream === 'undefined') return null;
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// Grava a imagem de 1 bit como XObject nativo do PDF. É o mesmo formato que
+// scanners usam para documentos P/B: linha nítida e arquivo muito menor do que
+// o JPEG equivalente. Sem CompressionStream, cai para PNG (maior, igualmente nítido).
+async function addBitonalPage(outDoc, ctx, canvas, packed, w, h, ptW, ptH){
+  const data = await deflate(packed);
+  if(data){
+    const dict = outDoc.context.obj({
+      Type: 'XObject', Subtype: 'Image', Width: w, Height: h,
+      ColorSpace: 'DeviceGray', BitsPerComponent: 1, Filter: 'FlateDecode',
+    });
+    const ref = outDoc.context.register(PDFLib.PDFRawStream.of(dict, data));
+    const page = outDoc.addPage([ptW, ptH]);
+    const name = page.node.newXObject('Img', ref);
+    page.pushOperators(
+      PDFLib.pushGraphicsState(),
+      PDFLib.concatTransformationMatrix(ptW, 0, 0, ptH, 0, 0),
+      PDFLib.drawObject(name),
+      PDFLib.popGraphicsState(),
+    );
+    return;
+  }
+  const img = ctx.createImageData(w, h);
+  const rowBytes = (w + 7) >> 3;
+  for(let y = 0; y < h; y++){
+    for(let x = 0; x < w; x++){
+      const branco = packed[y * rowBytes + (x >> 3)] & (0x80 >> (x & 7));
+      const i = (y * w + x) * 4;
+      img.data[i] = img.data[i+1] = img.data[i+2] = branco ? 255 : 0;
+      img.data[i+3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+  if(!blob) throw new Error('Falha ao codificar a página em PNG.');
+  const png = await outDoc.embedPng(new Uint8Array(await blob.arrayBuffer()));
+  outDoc.addPage([ptW, ptH]).drawImage(png, { x: 0, y: 0, width: ptW, height: ptH });
+}
+
 function toGrayscale(ctx, w, h){
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
@@ -574,15 +743,21 @@ async function mergeOnly(onProgress){
 async function rasterize(onProgress){
   const { PDFDocument } = PDFLib;
   const outDoc = await PDFDocument.create();
+  const bitonal = currentPreset() === 'pb';
   const dpi = parseInt(dpiEl.value, 10);
   const quality = parseInt(qualityEl.value, 10) / 100;
-  const grayscale = grayscaleEl.checked;
+  const grayscale = grayscaleEl.checked && !bitonal;
+  const threshold = parseInt(thresholdEl.value, 10);
   const baseScale = dpi / 72;
+  const maxPixels = bitonal ? MAX_PB_PIXELS : MAX_CANVAS_PIXELS;
 
   const files = usableFiles();
   const totalPages = files.reduce((s, f) => s + (f.pages || 1), 0);
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: !SUPPORTS_CTX_FILTER });
+  const ctx = canvas.getContext('2d', {
+    alpha: false,
+    willReadFrequently: bitonal || !SUPPORTS_CTX_FILTER,
+  });
   let done = 0;
 
   for(const item of files){
@@ -596,7 +771,7 @@ async function rasterize(onProgress){
         const base = page.getViewport({ scale: 1 });
 
         // não ultrapassa o limite de pixels do canvas do navegador
-        const cap = Math.sqrt(MAX_CANVAS_PIXELS / (base.width * base.height));
+        const cap = Math.sqrt(maxPixels / (base.width * base.height));
         const scale = Math.min(baseScale, cap);
         const viewport = page.getViewport({ scale });
 
@@ -610,10 +785,15 @@ async function rasterize(onProgress){
         if(grayscale && !SUPPORTS_CTX_FILTER) toGrayscale(ctx, canvas.width, canvas.height);
         page.cleanup();
 
-        const jpg = await outDoc.embedJpg(await canvasToJpegBytes(canvas, quality));
         const ptW = viewport.width / scale;
         const ptH = viewport.height / scale;
-        outDoc.addPage([ptW, ptH]).drawImage(jpg, { x: 0, y: 0, width: ptW, height: ptH });
+        if(bitonal){
+          const packed = binarize(ctx, canvas.width, canvas.height, threshold);
+          await addBitonalPage(outDoc, ctx, canvas, packed, canvas.width, canvas.height, ptW, ptH);
+        }else{
+          const jpg = await outDoc.embedJpg(await canvasToJpegBytes(canvas, quality));
+          outDoc.addPage([ptW, ptH]).drawImage(jpg, { x: 0, y: 0, width: ptW, height: ptH });
+        }
 
         done++;
         onProgress((done / Math.max(done, totalPages)) * 100,

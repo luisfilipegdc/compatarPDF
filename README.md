@@ -16,13 +16,17 @@ repositório no GitHub Pages e acesse a URL.
    setas, remova com o `✕`, ou use *Ordenar por nome* (ordenação numérica:
    `doc2` vem antes de `doc10`).
 2. **Qualidade e tamanho** — escolha um modo:
-   - **Apenas unir** — copia as páginas como estão. O texto continua
+   - **Apenas unir** (padrão) — copia as páginas como estão. O texto continua
      selecionável e nada perde qualidade; o arquivo final é a soma dos
      originais.
    - **Alta / Média / Menor** — cada página vira uma imagem JPEG. Reduz muito o
      tamanho de documentos digitalizados, mas o texto deixa de ser selecionável.
      Os controles de DPI, qualidade e escala de cinza ficam disponíveis para
      ajuste fino.
+   - **Digitalizado P/B** — cada página vira preto e branco puro (1 bit), como
+     fazem os scanners de documento. Traço nítido e arquivo muito menor que o
+     JPEG; o limiar é adaptativo, então corrige sombra de scanner e papel
+     amarelado. Não serve para fotos.
 3. **Arquivo final** — defina o nome e o limite do seu provedor de email; se o
    resultado passar do limite, aparece um aviso.
 
@@ -32,12 +36,49 @@ As preferências (modo, DPI, qualidade, cinza, limite) ficam salvas no navegador
 
 | Situação | Modo |
 | --- | --- |
-| PDFs gerados por computador (notas, boletos, relatórios) | **Apenas unir** — já são pequenos e o texto é preservado |
-| Digitalizações / fotos de documentos | **Média** ou **Menor** |
+| PDFs gerados por computador (notas, boletos, cartões-resposta em branco) | **Apenas unir** — já são pequenos e nada se perde |
+| Documento digitalizado, com traço fino ou texto miúdo | **Digitalizado P/B** |
+| Digitalização com foto, carimbo colorido ou assinatura em cor | **Alta** |
 | Documento que precisa continuar pesquisável | **Apenas unir** |
 
 A compressão por rasterização **aumenta** o tamanho de PDFs que são só texto ou
 vetor — nesses casos use *Apenas unir*.
+
+### Medições
+
+Números obtidos com os PDFs de teste do próprio projeto (um cartão-resposta
+digitalizado a 300 dpi e um cartão-resposta vetorial de 29 páginas):
+
+| Modo | Digitalizado (893 KB) | Vetorial 29 pág. (8,3 MB) |
+| --- | --- | --- |
+| Apenas unir | 893 KB (100%) | 8,3 MB (100%) |
+| Alta | 111 KB (12%) | 5,7 MB (69%) |
+| Média | 35 KB (4%) | 3,1 MB (37%) |
+| Digitalizado P/B 200 dpi | 10 KB (1%) | 0,77 MB (9%) |
+| Digitalizado P/B 300 dpi | 21 KB (2%) | 1,6 MB (19%) |
+
+No documento digitalizado de teste, o modo P/B preservou as 10 marcas
+preenchidas (inclusive as fracas, a lápis), sem nenhum falso positivo pelo
+critério usual de leitura óptica, e manteve as marcas fiduciais sólidas.
+
+## Cartão-resposta e leitura óptica
+
+Se o PDF vai ser auditado ou lido por sistema óptico, vale a pena saber o que
+cada modo faz com ele:
+
+- **Cartão em branco, gerado por sistema** (o arquivo ainda é vetorial): use
+  *Apenas unir*. Ele já está pequeno, o QR code fica intacto e o texto
+  permanece selecionável. Rasterizar aqui só piora.
+- **Cartão preenchido e digitalizado**: o modo *Digitalizado P/B* é o que dá o
+  melhor resultado — muito menor e mais legível que o JPEG.
+- **Cuidado com o cinza impresso**: muitos cartões trazem as letras A–E
+  impressas em cinza-claro dentro das bolhas, de propósito, para não confundir
+  o leitor óptico. O modo P/B transforma esse cinza em preto sólido: nos
+  testes deste projeto a tinta escura dentro da grade de respostas passou de
+  12,7% para 22%. Antes de converter um lote inteiro, passe uma folha pelo
+  sistema de leitura e confira.
+- **Nunca use Média ou Menor em cartão-resposta.** É o ajuste que borra o
+  traço fino e deixa a letra chapada — a diferença fica visível a olho nu.
 
 ## Limitações conhecidas
 
