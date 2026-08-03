@@ -74,6 +74,31 @@ existe por causa disso.
 
 19. Entregue o PDF pronto e o relatório de tamanho pedido no item 3.
 
+## Por que um único PDF, e não um arquivo por aluno
+
+O item 1 da lista acima é o que mais pesa no tamanho final, e é fácil de errar.
+Medição feita com o lote do 8º ano, pegando as mesmas 10 páginas:
+
+| Entrega | Por página |
+| --- | --- |
+| 10 arquivos de 1 página cada | 150,8 KB |
+| as mesmas 10 páginas em um único PDF | 25,3 KB |
+
+São **6× de diferença** sem nenhuma diferença visual: num PDF único a fonte e os
+recursos compartilhados ficam guardados uma vez só; em arquivos separados, cada
+um carrega a sua própria cópia.
+
+E isso **não dá para consertar depois**. Unir os arquivos separados nesta
+ferramenta não desfaz a duplicação — o pdf-lib não unifica esses recursos. Foi
+testado unificar os objetos idênticos byte a byte: o arquivo caía de 445 KB para
+166 KB, mas os cartões usam fontes Type3 (cada glifo é um stream próprio), e
+fazer duas fontes distintas passarem a compartilhar os mesmos glifos quebrou a
+extração de texto da segunda página em diante — o nome do aluno saía como
+`&/$5$` em vez de `CLARA`. O PDF continuava renderizando certo, o que torna o
+problema silencioso. Por isso a otimização não foi incluída na ferramenta.
+
+Ou seja: peça o lote inteiro em um PDF só, desde a geração.
+
 ## Depois de gerar
 
 - Para juntar vários lotes em um arquivo só, use o modo **Apenas unir** desta

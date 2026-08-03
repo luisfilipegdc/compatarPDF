@@ -89,6 +89,12 @@ cada modo faz com ele:
   estourar o limite de canvas de navegadores móveis e do Safari.
 - Documentos muito extensos consomem memória do navegador; o processamento é
   feito arquivo a arquivo e pode ser cancelado a qualquer momento.
+- **O modo *Apenas unir* não reduz tamanho.** Ao juntar arquivos que saíram do
+  mesmo gerador, cada um traz sua própria cópia das fontes, e a ferramenta não
+  unifica essas cópias — tentar isso quebrou a extração de texto em teste (veja
+  [docs/PROMPT-GERACAO-CARTOES.md](docs/PROMPT-GERACAO-CARTOES.md)). Se o lote
+  precisa ser pequeno *e* intacto, ele tem que sair pequeno da geração: um único
+  PDF com todas as páginas, em vez de um arquivo por página.
 
 ## Estrutura
 
