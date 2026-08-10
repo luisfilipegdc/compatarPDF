@@ -335,9 +335,27 @@ function fmtBytes(n){
   return (n/(1024*1024)).toFixed(1) + ' MB';
 }
 
+// O navegador só guarda uma referência ao arquivo; os bytes são lidos na hora.
+// Se o arquivo foi movido, renomeado, baixado de novo ou está numa pasta que
+// sincroniza na nuvem, essa leitura falha com NotReadableError — e a mensagem
+// original não diz qual arquivo nem o que fazer.
+async function lerArquivo(item){
+  try{
+    return await item.file.arrayBuffer();
+  }catch(err){
+    const e = new Error(`Não foi possível ler "${item.name}". O navegador perdeu o acesso a esse `
+      + 'arquivo, o que acontece quando ele é movido, renomeado, baixado de novo ou está numa pasta '
+      + 'sincronizada (OneDrive, Google Drive, iCloud). Escolha os arquivos de novo e repita.');
+    e.item = item;
+    throw e;
+  }
+}
+
 function describeError(err){
   const name = err && err.name;
   if(err instanceof CancelledError) return 'Cancelado.';
+  if(name === 'NotReadableError') return 'O navegador perdeu o acesso ao arquivo. '
+    + 'Escolha os arquivos de novo e repita.';
   if(name === 'PasswordException') return 'PDF protegido por senha.';
   if(name === 'InvalidPDFException') return 'Arquivo PDF inválido ou corrompido.';
   return (err && err.message) || 'Erro desconhecido.';
@@ -382,7 +400,7 @@ async function scanPageCounts(){
       item.scanned = true;
       let doc = null;
       try{
-        const buf = await item.file.arrayBuffer();
+        const buf = await lerArquivo(item);
         doc = await pdfjsLib.getDocument({ data: buf }).promise;
         item.pages = doc.numPages;
       }catch(err){
@@ -1002,7 +1020,7 @@ async function mergeOnly(onProgress){
     checkCancelled();
     const item = files[i];
     onProgress((i / files.length) * 45, `Copiando ${item.name}…`);
-    const src = await PDFDocument.load(await item.file.arrayBuffer(), { ignoreEncryption: true });
+    const src = await PDFDocument.load(await lerArquivo(item), { ignoreEncryption: true });
     const pages = await outDoc.copyPages(src, src.getPageIndices());
     pages.forEach(p => outDoc.addPage(p));
     await nextFrame();
@@ -1048,7 +1066,7 @@ async function rasterize(onProgress){
     checkCancelled();
     let pdf = null;
     try{
-      pdf = await pdfjsLib.getDocument({ data: await item.file.arrayBuffer() }).promise;
+      pdf = await pdfjsLib.getDocument({ data: await lerArquivo(item) }).promise;
       for(let i = 1; i <= pdf.numPages; i++){
         checkCancelled();
         const page = await pdf.getPage(i);
@@ -1150,7 +1168,8 @@ runBtn.addEventListener('click', async () => {
     }else{
       console.error(err);
       setProgress(0, 'Não foi possível gerar o PDF.');
-      showWarn('Erro: ' + describeError(err));
+      if(err && err.item){ err.item.error = 'Não foi possível ler este arquivo'; }
+      showWarn(describeError(err));
     }
   }finally{
     state.running = false;

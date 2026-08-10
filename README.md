@@ -101,6 +101,12 @@ cada modo faz com ele:
 ## Limitações conhecidas
 
 - PDFs protegidos por senha não são lidos (aparece o aviso na lista de arquivos).
+- O navegador guarda apenas uma referência aos arquivos escolhidos, e lê os bytes
+  na hora de gerar. Se nesse meio-tempo o arquivo for movido, renomeado, baixado
+  de novo ou estiver numa pasta que sincroniza na nuvem (OneDrive, Google Drive,
+  iCloud), a leitura falha — a ferramenta diz qual arquivo foi e marca ele na
+  lista; basta escolher os arquivos de novo. Para lotes grandes, vale copiar os
+  PDFs para uma pasta local antes.
 - No modo de compressão o texto vira imagem: não há OCR, então o resultado não é
   pesquisável.
 - Páginas muito grandes são limitadas a ~24 megapixels de renderização, para não

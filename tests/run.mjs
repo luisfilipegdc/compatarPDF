@@ -89,6 +89,44 @@ try{
   ok('otimizar não incha o arquivo', comOtim.length <= semOtim.length * 1.02,
     `${kb(comOtim.length)} contra ${kb(semOtim.length)}`);
 
+  // ------------------------------------------- arquivo que ficou inacessível
+  // Reproduz o NotReadableError do navegador: o arquivo foi escolhido, mas
+  // quando os bytes vão ser lidos ele não está mais acessível (movido,
+  // renomeado, baixado de novo, ou numa pasta que sincroniza na nuvem).
+  console.log('\narquivo inacessível no meio do caminho');
+  await page.evaluate(() => {
+    document.getElementById('clearBtn').click();
+    window.__original = File.prototype.arrayBuffer;
+    let leituras = 0;
+    File.prototype.arrayBuffer = function(){
+      // deixa a contagem de páginas passar e falha só na hora de gerar
+      if(++leituras > 2){
+        const e = new DOMException('The requested file could not be read', 'NotReadableError');
+        return Promise.reject(e);
+      }
+      return window.__original.call(this);
+    };
+  });
+  await page.setInputFiles('#fileInput', [vetorial, digitalizado]);
+  await page.waitForFunction(() => document.querySelectorAll('#fileList li').length === 2);
+  await page.check('input[name=preset][value=merge]', { force: true });
+  await page.click('#runBtn');
+  await page.waitForFunction(() => document.getElementById('warn').style.display === 'block',
+    null, { timeout: 60000 });
+  const aviso = (await page.textContent('#warn')).trim();
+  ok('avisa qual arquivo ficou inacessível', /cartao-(vetorial|digitalizado)\.pdf/.test(aviso), aviso.slice(0, 90));
+  ok('explica a causa provável', /movido|renomeado|sincronizada/i.test(aviso));
+  ok('não deixa a mensagem crua do navegador', !/permission problems|could not be read/i.test(aviso));
+  ok('marca o arquivo culpado na lista',
+    (await page.$$eval('#fileList li .meta.err', ns => ns.length)) > 0);
+  ok('libera o botão para tentar de novo', !(await page.isDisabled('#runBtn')));
+  await page.evaluate(() => { File.prototype.arrayBuffer = window.__original; });
+  // a falha acima é proposital e o app registra no console de propósito, para
+  // quem for depurar; descarta esses registros da checagem global do final
+  for(let i = erros.length - 1; i >= 0; i--){
+    if(/Não foi possível ler/.test(erros[i])) erros.splice(i, 1);
+  }
+
   // ------------------------------------------------------------- modo P/B
   console.log('\nmodo "Digitalizado P/B" (o que vai para auditoria)');
   const original = fs.statSync(digitalizado).size;
